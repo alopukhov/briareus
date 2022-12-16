@@ -8,6 +8,8 @@ import moe.dare.briareus.yarn.reousrces.ResourceFactory;
 import org.apache.hadoop.yarn.api.records.*;
 import org.apache.hadoop.yarn.client.api.YarnClientApplication;
 import org.apache.hadoop.yarn.conf.YarnConfiguration;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.concurrent.*;
 
@@ -15,6 +17,7 @@ import static java.util.Objects.requireNonNull;
 import static moe.dare.briareus.common.utils.Preconditions.checkState;
 
 class BriareusYarnShodanContextImpl implements BriareusYarnShodanContext {
+    private static final Logger log = LoggerFactory.getLogger(BriareusYarnShodanContextImpl.class);
     private static final String YARN_APPLICATION_TYPE = "BRIAREUS";
     private static final String DEFAULT_APPLICATION_NAME = "Briareus application";
     private static final int DEFAULT_APPLICATION_ATTEMPTS = 1;
@@ -29,12 +32,17 @@ class BriareusYarnShodanContextImpl implements BriareusYarnShodanContext {
     private final ResourceFactory resourceFactory;
     private final UgiYarnClient client;
     private final AppStatusMonitor appStatusMonitor;
+    private final ShodanYarnRequestConfigurator requestConfigurator;
     private volatile boolean closed;
 
-    public BriareusYarnShodanContextImpl(UgiYarnClient client, LaunchContextFactory launchContextFactory, ResourceFactory resourceFactory) {
+    public BriareusYarnShodanContextImpl(UgiYarnClient client,
+                                         LaunchContextFactory launchContextFactory,
+                                         ResourceFactory resourceFactory,
+                                         ShodanYarnRequestConfigurator requestConfigurator) {
         this.client = client;
         this.launchContextFactory = launchContextFactory;
         this.resourceFactory = resourceFactory;
+        this.requestConfigurator = requestConfigurator;
         this.appStatusMonitor = new AppStatusMonitor(client);
     }
 
@@ -52,20 +60,32 @@ class BriareusYarnShodanContextImpl implements BriareusYarnShodanContext {
 
     private YarnSenseiJvmProcess start(RemoteJvmOptions options, ContainerLaunchContext containerLaunchContext) {
         YarnClientApplication app = client.createApplication();
-        Resource maximumResourceCapability = app.getNewApplicationResponse().getMaximumResourceCapability();
-        Resource senseiContainerResource = resourceFactory.resources(options, maximumResourceCapability);
         ApplicationSubmissionContext senseiContext = app.getApplicationSubmissionContext();
-        senseiContext.setApplicationType(YARN_APPLICATION_TYPE);
-        senseiContext.setAMContainerSpec(containerLaunchContext);
-        senseiContext.setResource(senseiContainerResource);
-        senseiContext.setKeepContainersAcrossApplicationAttempts(keepContainers(options));
-        senseiContext.setApplicationName(applicationName(options));
-        senseiContext.setMaxAppAttempts(applicationAttempts(options));
-        senseiContext.setQueue(yarnQueue(options));
-        senseiContext.setPriority(applicationPriority(options));
-        senseiContext.setUnmanagedAM(false);
-        options.getOpt(ShodanOpts.YARN_APPLICATION_NODE_LABEL_EXPRESSION)
-                .ifPresent(senseiContext::setNodeLabelExpression);
+        ApplicationId appId = senseiContext.getApplicationId();
+        try {
+            Resource maximumResourceCapability = app.getNewApplicationResponse().getMaximumResourceCapability();
+            Resource senseiContainerResource = resourceFactory.resources(options, maximumResourceCapability);
+            senseiContext.setApplicationType(YARN_APPLICATION_TYPE);
+            senseiContext.setAMContainerSpec(containerLaunchContext);
+            senseiContext.setResource(senseiContainerResource);
+            senseiContext.setKeepContainersAcrossApplicationAttempts(keepContainers(options));
+            senseiContext.setApplicationName(applicationName(options));
+            senseiContext.setMaxAppAttempts(applicationAttempts(options));
+            senseiContext.setQueue(yarnQueue(options));
+            senseiContext.setPriority(applicationPriority(options));
+            senseiContext.setUnmanagedAM(false);
+            options.getOpt(ShodanOpts.YARN_APPLICATION_NODE_LABEL_EXPRESSION)
+                    .ifPresent(senseiContext::setNodeLabelExpression);
+            requestConfigurator.configure(senseiContext, options);
+        } catch (Exception e) {
+            try {
+                log.warn("There was an error during app {} submission context configuration. Killing it.", appId);
+                client.killApplication(appId);
+            } catch (Exception killException) {
+                log.warn("Can't kill app {}", appId, killException);
+            }
+            throw e;
+        }
         ApplicationId applicationId = client.submitApplication(senseiContext);
         CompletableFuture<FinalApplicationStatus> statusFuture = appStatusMonitor.monitorApplication(applicationId);
         return new YarnSenseiJvmProcessImpl(applicationId, client, statusFuture);

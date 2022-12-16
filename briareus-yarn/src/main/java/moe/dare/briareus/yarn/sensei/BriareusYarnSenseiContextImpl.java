@@ -14,6 +14,7 @@ import org.apache.hadoop.yarn.api.protocolrecords.RegisterApplicationMasterRespo
 import org.apache.hadoop.yarn.api.records.*;
 import org.apache.hadoop.yarn.client.api.AMRMClient;
 import org.apache.hadoop.yarn.client.api.AMRMClient.ContainerRequest;
+import org.apache.hadoop.yarn.client.api.AMRMClient.ContainerRequest.ContainerRequestBuilder;
 import org.apache.hadoop.yarn.client.api.NMTokenCache;
 import org.apache.hadoop.yarn.client.api.async.NMClientAsync;
 import org.apache.hadoop.yarn.exceptions.ApplicationAttemptNotFoundException;
@@ -50,6 +51,7 @@ class BriareusYarnSenseiContextImpl implements BriareusYarnSenseiContext {
     private final UserGroupInformation user;
     private final LaunchContextFactory launchContextFactory;
     private final ResourceFactory resourceFactory;
+    private final SenseiYarnRequestConfigurator requestConfigurator;
     private final Runnable shutdownRequestHandler;
 
     private volatile ApplicationStatus finalStatus = ApplicationStatus.succeeded();
@@ -60,10 +62,12 @@ class BriareusYarnSenseiContextImpl implements BriareusYarnSenseiContext {
     BriareusYarnSenseiContextImpl(UserGroupInformation user,
                                   LaunchContextFactory launchContextFactory,
                                   ResourceFactory resourceFactory,
+                                  SenseiYarnRequestConfigurator requestConfigurator,
                                   Runnable shutdownRequestHandler) {
         this.user = requireNonNull(user, "user");
         this.launchContextFactory = requireNonNull(launchContextFactory, "launchContextFactory");
         this.resourceFactory = requireNonNull(resourceFactory, "resourceFactory");
+        this.requestConfigurator = requireNonNull(requestConfigurator, "requestConfigurator");
         this.shutdownRequestHandler = requireNonNull(shutdownRequestHandler, "shutdownRequestHandler");
         NMTokenCache nmTokenCache = new NMTokenCache(); // get rid of NMTokenCache singleton
         NMCallbackHandler nmCallback = new NMCallbackHandler(startingContainers);
@@ -126,12 +130,13 @@ class BriareusYarnSenseiContextImpl implements BriareusYarnSenseiContext {
     private ContainerRequest createRequest(RemoteJvmOptions options) {
         int requestNumber = requestCounter.updateAndGet(x -> Math.max(x + 1, 1));
         Resource resources = resourceFactory.resources(options, maximumResourceCapability);
-        return ContainerRequest.newBuilder()
+        ContainerRequestBuilder requestBuilder = ContainerRequest.newBuilder()
                 .allocationRequestId(requestNumber)
                 .executionTypeRequest(GUARANTEED_EXECUTION_TYPE)
                 .capability(resources)
-                .priority(Priority.newInstance(requestNumber))
-                .build();
+                .priority(Priority.newInstance(requestNumber));
+        requestConfigurator.configure(requestBuilder, options);
+        return requestBuilder.build();
     }
 
     private CompletableFuture<Container> allocateContainer(ContainerRequest request) {

@@ -22,6 +22,7 @@ import static moe.dare.briareus.common.utils.Preconditions.checkState;
  * <br>Optional parameters:
  * <ul>
  *     <li>resourceFactory</li>
+ *     <li>requestConfigurator</li>
  * </ul>
  */
 public class BriareusYarnShodanContextBuilder {
@@ -29,6 +30,7 @@ public class BriareusYarnShodanContextBuilder {
     private LaunchContextFactory launchContextFactory;
     private ResourceFactory resourceFactory;
     private Configuration configuration;
+    private ShodanYarnRequestConfigurator requestConfigurator;
 
     public static BriareusYarnShodanContextBuilder newBuilder() {
         return new BriareusYarnShodanContextBuilder();
@@ -81,15 +83,31 @@ public class BriareusYarnShodanContextBuilder {
         return this;
     }
 
+    /**
+     * Optional property.
+     *
+     * @param requestConfigurator ShodanYarnRequestConfigurator instance
+     * @return this instance for chaining
+     */
+    public BriareusYarnShodanContextBuilder requestConfigurator(ShodanYarnRequestConfigurator requestConfigurator) {
+        this.requestConfigurator = Objects.requireNonNull(requestConfigurator, "requestConfigurator");
+        return this;
+    }
+
     public BriareusYarnShodanContext build() {
         checkState(user != null, "user not set");
         checkState(configuration != null, "configuration not set");
         checkState(launchContextFactory != null, "launch context factory not set");
         ResourceFactory resourceFactoryOrDefault = ofNullable(resourceFactory).orElseGet(ResourceFactory::createDefault);
+        ShodanYarnRequestConfigurator requestConfiguratorOrDefault = ofNullable(requestConfigurator)
+                .orElse(DummyShodanYarnRequestConfigurator.INSTANCE);
         UgiYarnClient client = new UgiYarnClient(user);
         client.start(configuration);
         try {
-            return new BriareusYarnShodanContextImpl(client, launchContextFactory, resourceFactoryOrDefault);
+            return new BriareusYarnShodanContextImpl(client,
+                    launchContextFactory,
+                    resourceFactoryOrDefault,
+                    requestConfiguratorOrDefault);
         } catch (Exception e) {
             try {
                 client.stop();

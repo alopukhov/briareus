@@ -42,6 +42,7 @@ import static moe.dare.briareus.common.utils.Preconditions.checkState;
  *     <li>host</li>
  *     <li>port</li>
  *     <li>trackingUrl</li>
+ *     <li>requestConfigurator</li>
  * </ul>
  */
 public class BriareusYarnSenseiContextBuilder {
@@ -51,6 +52,7 @@ public class BriareusYarnSenseiContextBuilder {
     private UserGroupInformation user;
     private LaunchContextFactory launchContextFactory;
     private ResourceFactory resourceFactory;
+    private SenseiYarnRequestConfigurator requestConfigurator;
     private Runnable shutdownRequestHandler;
     private Configuration configuration;
     private String host;
@@ -156,6 +158,11 @@ public class BriareusYarnSenseiContextBuilder {
         return this;
     }
 
+    public BriareusYarnSenseiContextBuilder requestConfigurator(SenseiYarnRequestConfigurator requestConfigurator) {
+        this.requestConfigurator =  requireNonNull(requestConfigurator, "requestConfigurator");
+        return this;
+    }
+
     public BriareusYarnSenseiContext build() {
         checkState(configuration != null, "configuration not set");
         checkState(launchContextFactory != null, "launch context factory not set");
@@ -164,10 +171,13 @@ public class BriareusYarnSenseiContextBuilder {
         String hostOrDefault = ofNullable(host).orElseGet(this::getDefaultHost);
         Runnable shutdownRequestHandlerOrDefault = ofNullable(shutdownRequestHandler)
                 .orElse(DefaultShutdownRequestHandler.INSTANCE);
+        SenseiYarnRequestConfigurator requestConfiguratorOrDefault = ofNullable(requestConfigurator)
+                .orElse(DummySenseiYarnRequestConfigurator.INSTANCE);
         BriareusYarnSenseiContextImpl context = new BriareusYarnSenseiContextImpl(
                 userOrDefault,
                 launchContextFactory,
                 resourceFactoryOrDefault,
+                requestConfiguratorOrDefault,
                 shutdownRequestHandlerOrDefault);
         context.startContext(configuration, hostOrDefault, port, trackingUrl);
         return context;
